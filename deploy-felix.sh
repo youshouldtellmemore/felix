@@ -4,8 +4,7 @@
 # Copyright: 2025-01-18
 # 
 # About:
-#  This script sets up the felix server to act as a cloudflare tunnel, and serve the djfm Django web app from a
-#  sub-domain.
+#  This script sets up the felix server to act as a cloudflare tunnel, and serve the Django web app from a sub-domain.
 # 
 
 set -euo pipefail
