@@ -138,6 +138,7 @@ echo_status "Creating application folders."
 sudo install -d -o "${APP_USER}" -g "${APP_USER}" \
   "${APP_RUN_ROOT}" \
   "${APP_WWW_ROOT}" \
+  "${APP_LOG_ROOT}/django-db-backup-restore" \
   "${APP_LOG_ROOT}/gunicorn" \
   "${APP_LOG_ROOT}/postgres-backup-restore"
 
@@ -604,3 +605,187 @@ WantedBy=timers.target
 EOF
 sudo systemctl daemon-reload
 sudo systemctl enable "/etc/systemd/system/${APP_URL}-postgres-backup.timer"
+
+cat << SH_EOF > "${APP_ROOT}/bin/django-db-backup-restore.sh"
+#!/bin/bash
+
+set -e  # Exit on any unhandled error
+
+# Standalone script for Django database backup using dumpdata / loaddata
+# - Creates compressed JSON backups (.json.gz)
+# - Supports optional restoration via loaddata
+# - Syntax: django-db-backup-restore.sh [--restore RESTORE_FILE] [--help]
+# - Logs to /var/log/APP_NAME/django-db-backup-restore/django-db-backup-restore.log
+# - Stores backups in /var/backups/APP_NAME/django
+
+# Default configuration
+APP_NAME="${APP_URL}"
+DJANGO_APP_ROOT="${APP_REPO_NAME}/${APP_REPO_NAME}"
+BACKUP_RETENTION_DAYS=7          # Days to keep backups
+
+# Function to display usage information
+usage() {
+    cat << EOF
+Usage: \$0 [--restore RESTORE_FILE] [--help]
+
+Options:
+  --restore RESTORE_FILE Path to JSON backup file for manage.py loaddata (optional)
+  --help                 Display this help message
+
+Description:
+  Performs Django dumpdata backup (creating .json.gz files).
+  Optionally restores from a JSON backup if specified.
+  Logs to /var/log/\${APP_NAME}/django-db-backup-restore/django-db-backup-restore.log
+  and stores backups in /var/backups/\${APP_NAME}/django.
+
+Example:
+  \$0 --restore backup.json.gz
+EOF
+    exit 0
+}
+
+# Parse command-line arguments
+while [ \$# -gt 0 ]; do
+    case "\$1" in
+        --restore)
+            RESTORE_FILE="\$2"
+            shift 2
+            ;;
+        --help)
+            usage
+            ;;
+        *)
+            echo "Error: Unknown option \$1" >&2
+            usage
+            ;;
+    esac
+done
+
+# Set derived variables
+LOG_FILE="/var/log/\${APP_NAME}/django-db-backup-restore/django-db-backup-restore.log"
+BACKUP_DIR="/var/backups/\${APP_NAME}/django"
+
+# Ensure log directory and file exist with secure permissions
+mkdir -p "\$(dirname "\$LOG_FILE")"
+chmod 700 "\$(dirname "\$LOG_FILE")"
+touch "\$LOG_FILE"
+chmod 600 "\$LOG_FILE"
+
+# Ensure backup directory exists with secure permissions
+mkdir -p "\$BACKUP_DIR"
+chmod 700 "\$BACKUP_DIR"
+
+# Function to log messages
+# Args: \$1 - Message to log
+log_message() {
+    echo "\$(date): \$1" | tee -a "\$LOG_FILE"
+}
+
+# Function to perform Django dumpdata backup
+backup_database() {
+    local backup_file="\$BACKUP_DIR/backup_\${APP_NAME}_\$(date +%F_%H%M%S).json.gz"
+    log_message "Starting backup for \$APP_NAME"
+
+    cd ~/
+    source .venv/bin/activate
+    cd "\${DJANGO_APP_ROOT}/"
+
+    if python3 manage.py dumpdata --natural-foreign --exclude auth.permission --exclude contenttypes | gzip > "\$backup_file" 2>>"\$LOG_FILE"; then
+        log_message "Backup created: \$backup_file"
+    else
+        log_message "Error: Failed to create backup for \$APP_NAME"
+        exit 1
+    fi
+
+    # Set secure permissions on backup file
+    chmod 640 "\$backup_file"
+
+    # Rotate backups older than retention period and log deleted files
+    local deleted_files
+    deleted_files=\$(find "\$BACKUP_DIR" -name "backup_\${APP_NAME}_*.json.gz" -mtime +"\$BACKUP_RETENTION_DAYS" -print -delete)
+    if [ -n "\$deleted_files" ]; then
+        log_message "Rotated backups (older than \$BACKUP_RETENTION_DAYS days):"
+        echo "\$deleted_files" | while IFS= read -r file; do
+            log_message "  Deleted: \$file"
+        done
+    else
+        log_message "No backups older than \$BACKUP_RETENTION_DAYS days to rotate"
+    fi
+}
+
+# Function to restore database from Django JSON dumpdata
+# Args: \$1 - Path to backup file
+restore_database() {
+    local backup_file="\$1"
+    if [ -z "\$backup_file" ]; then
+        log_message "No restore file provided, skipping restoration"
+        return
+    fi
+    if [ ! -r "\$backup_file" ]; then
+        log_message "Error: Backup file \$backup_file not readable or does not exist"
+        exit 1
+    fi
+
+    log_message "Restoring database \$APP_NAME from \$backup_file"
+
+    cd ~/
+    source .venv/bin/activate
+    cd "\${DJANGO_APP_ROOT}/"
+
+    if python3 manage.py loaddata "\$backup_file" >/dev/null 2>&1; then
+        log_message "Database \$APP_NAME restored successfully"
+    else
+        log_message "Error: Failed to restore database \$APP_NAME"
+        exit 1
+    fi
+}
+
+# Main execution
+log_message "Starting database backup for \$APP_NAME (backups in \$BACKUP_DIR)"
+
+# Perform restore if specified
+restore_database "\$RESTORE_FILE"
+
+# Perform backup
+backup_database
+
+log_message "Database backup for \$APP_NAME completed successfully"
+
+exit 0
+SH_EOF
+chown "${APP_USER}:${APP_USER}" "${APP_ROOT}/bin/django-db-backup-restore.sh"
+chmod +x "${APP_ROOT}/bin/django-db-backup-restore.sh"
+
+echo_status "Creating web application Django DB backup unit service."
+cat << EOF > "/etc/systemd/system/${APP_URL}-django-db-backup.service"
+[Unit]
+Description=${APP_URL} Django DB Database Backup
+After=network.target
+
+[Service]
+Type=oneshot
+User=${APP_USER}
+Group=${APP_USER}
+WorkingDirectory=${APP_ROOT}
+ExecStart=${APP_ROOT}/bin/django-db-backup-restore.sh
+StandardOutput=append:${APP_LOG_ROOT}/django-db-backup-restore/service.log
+StandardError=append:${APP_LOG_ROOT}/django-db-backup-restore/service.log
+
+[Install]
+WantedBy=multi-user.target
+
+EOF
+
+cat << EOF > "/etc/systemd/system/${APP_URL}-django-db-backup.timer"
+[Unit]
+Description=Daily ${APP_URL} Django DB Database Backup
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+sudo systemctl daemon-reload
+sudo systemctl enable "/etc/systemd/system/${APP_URL}-django-db-backup.timer"
