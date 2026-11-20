@@ -102,7 +102,6 @@ apt-get install -y --no-install-recommends \
 
 echo_status "Disabling nginx's default site."
 sudo unlink /etc/nginx/sites-enabled/default
-sudo systemctl reload nginx
 
 # 4. Create the web application's postgresql database and, optionally, restore it from backup.
 echo_status "Setting up PostgreSQL"
@@ -132,31 +131,47 @@ fi
 # 5. Setup the application user and necessary application folders.
 echo_status "Creating application user ${APP_USER}"
 sudo adduser --system --home "${APP_ROOT}" --group "${APP_USER}" --no-create-home
-sudo install -d -o "${APP_USER}" -g "${APP_USER}" -m 0700 "${APP_ROOT}/bin"
+sudo mkdir -p "${APP_ROOT}/bin"
+sudo chown -R "${APP_USER}":"${APP_USER}" "${APP_ROOT}"
+sudo chmod -R 0700 "${APP_ROOT}"
 
-echo_status "Creating application folders."
-sudo install -d -o "${APP_USER}" -g "${APP_USER}" \
-  "${APP_RUN_ROOT}" \
-  "${APP_WWW_ROOT}" \
-  "${APP_LOG_ROOT}/django-db-backup-restore" \
-  "${APP_LOG_ROOT}/gunicorn" \
-  "${APP_LOG_ROOT}/postgres-backup-restore"
+echo_status "Creating application backup folders."
+sudo mkdir -p "${APP_BACKUPS_ROOT}/"{django,postgres}
+sudo chown -R "${APP_USER}":"${APP_USER}" "${APP_BACKUPS_ROOT}"
+sudo chmod -R 0750 "${APP_BACKUPS_ROOT}"
 
-sudo install -d -o "${APP_USER}" -g "www-data" -m 0775 "${APP_LOG_ROOT}/nginx"
+echo_status "Creating application logging folders."
+sudo mkdir -p "${APP_LOG_ROOT}/"{django-db-backup-restore,gunicorn,nginx,postgres-backup-restore}
+sudo chown -R "${APP_USER}":"${APP_USER}" "${APP_LOG_ROOT}"
+sudo chmod -R 0750 "${APP_LOG_ROOT}"
+sudo chown -R :"www-data" "${APP_LOG_ROOT}/nginx"
+sudo chmod -R 0770 "${APP_LOG_ROOT}/nginx"
 
-sudo install -d -o "${APP_USER}" -g "${APP_USER}" -m 0750 "${APP_BACKUPS_ROOT}/django"
-sudo install -d -o "${APP_USER}" -g "${APP_USER}" -m 0700 "${APP_BACKUPS_ROOT}/postgres"
+echo_status "Creating application run folder."
+sudo mkdir -p "${APP_RUN_ROOT}"
+sudo chown -R "${APP_USER}":"${APP_USER}" "${APP_RUN_ROOT}"
+sudo chmod -R 0750 "${APP_RUN_ROOT}"
+
+echo_status "Creating application www folder."
+sudo mkdir -p "${APP_WWW_ROOT}"
+sudo chown -R "${APP_USER}":"${APP_USER}" "${APP_WWW_ROOT}"
+sudo chmod -R 0755 "${APP_WWW_ROOT}"
 
 # 6. Setup the acme user and necessary application folders.
 # Create a non-root user account for running acme per https://github.com/acmesh-official/acme.sh/wiki/sudo#create-non-root-account.
 sudo adduser --system --home "${ACME_ROOT}" --group acme --no-create-home
-sudo install -d -o "acme" -g "acme" -m 0750 "${ACME_ROOT}"
+sudo mkdir -p "${ACME_ROOT}"
+sudo chown -R acme:acme "${ACME_ROOT}"
+sudo chmod -R 0750 "${ACME_ROOT}"
 
 echo "acme ALL=(ALL) NOPASSWD: /usr/bin/systemctl reload nginx" > /etc/sudoers.d/acme-nginx
 sudo chmod 0440 /etc/sudoers.d/acme-nginx
 
-sudo install -d -o "acme" -g "acme" "${ACME_WWW_ROOT}"
-sudo install -d -o "acme" -g "www-data" -m 0740 "${APP_CERTS_ROOT}"
+sudo mkdir -p "${ACME_WWW_ROOT}"
+sudo chown -R acme:acme "${ACME_WWW_ROOT}"
+sudo mkdir -p "${APP_CERTS_ROOT}"
+sudo chown -R acme:www-data "${APP_CERTS_ROOT}"
+sudo chmod -R 0740 "${APP_CERTS_ROOT}"
 
 # 7. Install acme.sh – cannot issue certificates until Cloudflare tunnel is setup.
 echo_status "[acme] Installing acme.sh to ${ACME_ROOT}"
@@ -192,7 +207,7 @@ server {
 }
 EOF
 sudo ln -s /etc/nginx/sites-available/acme /etc/nginx/sites-enabled/acme
-sudo systemctl reload nginx
+sudo systemctl start nginx
 
 # 9. Setup Cloudflare tunnel.
 if [[ -f "${CF_SYSTEMD_SERVICE}" ]]; then
