@@ -389,7 +389,7 @@ cat << SH_EOF > "${APP_ROOT}/bin/postgres-backup-restore.sh"
 #!/bin/bash
 
 # Standalone script for PostgreSQL database backup using pg_dump
-# - Uses pg_dump -Fc for custom-format backups (.dump.gz)
+# - Uses pg_dump -Fc for custom-format backups (.dump)
 # - Supports optional restoration from custom-format backups
 # - Loads DATABASE_URL from an environment file (key/value format)
 # - Syntax: db_backup_pg_dump.sh [--env ENV_FILE] [--restore RESTORE_FILE] [--help]
@@ -418,7 +418,7 @@ Options:
   --help               Display this help message
 
 Description:
-  Performs pg_dump backup of the database specified in DATABASE_URL (creating .dump.gz files).
+  Performs pg_dump backup of the database specified in DATABASE_URL (creating .dump files).
   Optionally restores from a custom-format backup if specified.
   Requires an env file with:
   DATABASE_URL=postgres://username:password@host:port/database
@@ -499,11 +499,11 @@ log_message() {
 
 # Function to perform pg_dump backup
 backup_database() {
-    local backup_file="\$BACKUP_DIR/backup_\${DB_NAME}_\$(date +%F_%H%M%S).dump.gz"
+    local backup_file="\$BACKUP_DIR/backup_\${DB_NAME}_\$(date +%F_%H%M%S).dump"
     log_message "Starting pg_dump backup for \$DB_NAME"
 
     # Use URI directly (no --dbname=) with -w (fail immediately on password issues)
-    if pg_dump -Fc -w "\$DATABASE_URL" | gzip > "\$backup_file" 2>>"\$LOG_FILE"; then
+    if pg_dump -Fc -w "\$DATABASE_URL" > "\$backup_file" 2>>"\$LOG_FILE"; then
         log_message "Backup created: \$backup_file"
     else
         log_message "Error: Failed to create backup for \$DB_NAME"
@@ -515,7 +515,7 @@ backup_database() {
 
     # Rotate backups older than retention period and log deleted files
     local deleted_files
-    deleted_files=\$(find "\$BACKUP_DIR" -name "backup_\${DB_NAME}_*.dump.gz" -mtime +"\$BACKUP_RETENTION_DAYS" -print -delete)
+    deleted_files=\$(find "\$BACKUP_DIR" -name "backup_\${DB_NAME}_*.dump" -mtime +"\$BACKUP_RETENTION_DAYS" -print -delete)
     if [ -n "\$deleted_files" ]; then
         log_message "Rotated backups (older than \$BACKUP_RETENTION_DAYS days):"
         echo "\$deleted_files" | while IFS= read -r file; do
@@ -541,7 +541,7 @@ restore_database() {
     log_message "Restoring database \$DB_NAME from \$backup_file"
 
     # Use URI directly (no --dbname=) with -w (fail immediately on password issues)
-    if pg_restore -w --no-owner "\$DATABASE_URL" "\$backup_file" >/dev/null 2>&1; then
+    if pg_restore -w --no-owner --dbname="\$DATABASE_URL" "\$backup_file" >/dev/null 2>&1; then
         log_message "Database \$DB_NAME restored successfully"
     else
         log_message "Error: Failed to restore database \$DB_NAME"
@@ -705,7 +705,7 @@ backup_database() {
     source .venv/bin/activate
     cd "\${DJANGO_APP_ROOT}/"
 
-    if python3 manage.py dumpdata --natural-foreign --exclude auth.permission --exclude contenttypes | gzip > "\$backup_file" 2>>"\$LOG_FILE"; then
+    if python3 manage.py dumpdata --natural-foreign --exclude auth.permission --exclude contenttypes 2>>"\$LOG_FILE" | gzip > "\$backup_file" 2>>"\$LOG_FILE"; then
         log_message "Backup created: \$backup_file"
     else
         log_message "Error: Failed to create backup for \$APP_NAME"
