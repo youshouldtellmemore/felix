@@ -60,7 +60,7 @@ APP_REPO_NAME="${APP_REPO_NAME%.git}"
 APP_ROOT="/opt/${APP_URL}"
 APP_LOG_ROOT="/var/log/${APP_URL}"          # gunicorn, nginx logs.
 APP_BACKUPS_ROOT="/var/backups/${APP_URL}"  # Django and postgres DB backups.
-APP_RUN_ROOT="/var/run/${APP_URL}"          # gunicorn socket and nginx PID files.
+APP_RUN_ROOT="/run/${APP_URL}"          # gunicorn socket and nginx PID files.
 APP_WWW_ROOT="/var/www/${APP_URL}"          # Django staticfiles served by nginx.
 APP_CERTS_ROOT="/etc/acme/${APP_URL}"       # ACME-generated certificate files for the application.
 
@@ -149,8 +149,6 @@ sudo chmod -R 0770 "${APP_LOG_ROOT}/nginx"
 
 echo_status "Creating application run folder."
 sudo mkdir -p "${APP_RUN_ROOT}"
-sudo chown -R "${APP_USER}":"www-data" "${APP_RUN_ROOT}"
-sudo chmod -R 0750 "${APP_RUN_ROOT}"
 
 echo_status "Creating application www folder."
 sudo mkdir -p "${APP_WWW_ROOT}"
@@ -285,7 +283,6 @@ SocketUser=${APP_USER}
 SocketGroup=www-data
 # Once the user/group is correct, restrict the permissions:
 SocketMode=0660
-DirectoryMode=0750
 
 [Install]
 WantedBy=sockets.target
@@ -324,6 +321,7 @@ WantedBy=multi-user.target
 EOF
 
 # Enable socket and start its service.
+sudo systemctl daemon-reload
 sudo systemctl enable --now "${APP_URL}-gunicorn.socket"
 sudo systemctl start "${APP_URL}-gunicorn"
 
@@ -339,7 +337,7 @@ error_log  ${APP_LOG_ROOT}/nginx/error.log warn;
 access_log ${APP_LOG_ROOT}/nginx/access.log combined;
 
 upstream app_server {
-  server unix:/run/${APP_URL}/gunicorn.sock fail_timeout=0;
+  server unix:${APP_RUN_ROOT}/gunicorn.sock fail_timeout=0;
 }
 
 server {
@@ -400,13 +398,14 @@ cat << SH_EOF > "${APP_ROOT}/bin/postgres-backup-restore.sh"
 # - Logs deleted backup files during rotation
 # - Designed for systemd automation with error handling and secure permissions
 
-set -e  # Exit on any unhandled error
+set -euo pipefail  # Exit on any unhandled error
 
 # Default configuration
 APP_NAME="${APP_URL}"
 PGPASS_FILE="${APP_ROOT}/.pgpass"
 DEFAULT_ENV_FILE="${APP_ROOT}/${APP_REPO_NAME}/${APP_REPO_NAME}/settings/.env"
 BACKUP_RETENTION_DAYS=365  # Days to keep backups
+RESTORE_FILE=""
 
 # Function to display usage information
 usage() {
@@ -619,12 +618,12 @@ Persistent=true
 WantedBy=timers.target
 EOF
 sudo systemctl daemon-reload
-sudo systemctl enable "/etc/systemd/system/${APP_URL}-postgres-backup.timer"
+sudo systemctl enable --now "/etc/systemd/system/${APP_URL}-postgres-backup.timer"
 
 cat << SH_EOF > "${APP_ROOT}/bin/django-db-backup-restore.sh"
 #!/bin/bash
 
-set -e  # Exit on any unhandled error
+set -euo pipefail  # Exit on any unhandled error
 
 # Standalone script for Django database backup using dumpdata / loaddata
 # - Creates compressed JSON backups (.json.gz)
@@ -637,6 +636,7 @@ set -e  # Exit on any unhandled error
 APP_NAME="${APP_URL}"
 DJANGO_APP_ROOT="${APP_REPO_NAME}/${APP_REPO_NAME}"
 BACKUP_RETENTION_DAYS=7          # Days to keep backups
+RESTORE_FILE=""
 
 # Function to display usage information
 usage() {
@@ -803,4 +803,4 @@ Persistent=true
 WantedBy=timers.target
 EOF
 sudo systemctl daemon-reload
-sudo systemctl enable "/etc/systemd/system/${APP_URL}-django-db-backup.timer"
+sudo systemctl enable --now "/etc/systemd/system/${APP_URL}-django-db-backup.timer"
