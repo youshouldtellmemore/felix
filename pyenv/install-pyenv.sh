@@ -104,12 +104,13 @@ else
     git clone --depth 1 https://github.com/pyenv/pyenv-update.git "${PLUGIN_DIR}"
 fi
 
-# 5. Build pyenv
+# 5. Build pyenv and initialize
 echo_status "Building pyenv..."
 (
     cd "${PYENV_ROOT}"
     echo_status "→ Running src/configure && make -C src ..."
     src/configure && make -C src
+    PYENV_ROOT="${PYENV_ROOT}" "${PYENV_ROOT}/bin/pyenv" rehash
 )
 
 # 6. Create system-wide environment file so pyenv is available to all users
