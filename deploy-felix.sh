@@ -312,7 +312,6 @@ ExecStart=${APP_ROOT}/.venv/bin/gunicorn settings.wsgi:application \
 	--name "${APP_URL}-gunicorn" \
 	--limit-request-line 8190 \
 	--workers 3 \
-	--bind unix:${APP_RUN_ROOT}/gunicorn.sock \
 	--access-logfile ${APP_LOG_ROOT}/gunicorn/access.log \
 	--error-logfile ${APP_LOG_ROOT}/gunicorn/error.log
 ExecReload=/bin/kill -s HUP \$MAINPID
