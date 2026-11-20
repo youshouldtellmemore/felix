@@ -149,7 +149,7 @@ sudo chmod -R 0770 "${APP_LOG_ROOT}/nginx"
 
 echo_status "Creating application run folder."
 sudo mkdir -p "${APP_RUN_ROOT}"
-sudo chown -R "${APP_USER}":"${APP_USER}" "${APP_RUN_ROOT}"
+sudo chown -R "${APP_USER}":"www-data" "${APP_RUN_ROOT}"
 sudo chmod -R 0750 "${APP_RUN_ROOT}"
 
 echo_status "Creating application www folder."
@@ -285,6 +285,7 @@ SocketUser=${APP_USER}
 SocketGroup=www-data
 # Once the user/group is correct, restrict the permissions:
 SocketMode=0660
+DirectoryMode=0750
 
 [Install]
 WantedBy=sockets.target
